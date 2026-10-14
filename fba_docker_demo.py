@@ -126,12 +126,13 @@ def compose(nodes):
       - archive:/archive
     ports:
       - "{11626 + i}:11626"
-    ''' for i, x in enumerate(nodes))
+''' for i, x in enumerate(nodes))
     vols = "".join(f"  {x}-data:\n" for x in nodes)
     return f"services:\n{svc}\nvolumes:\n{vols}  archive:\n"
 
 
 START = '''#!/bin/sh
+set -e
 CFG=/etc/stellar/stellar-core.cfg
 if [ ! -f /data/.initialized ]; then
   stellar-core --conf "$CFG" new-db
