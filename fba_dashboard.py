@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import urllib.request
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
@@ -21,7 +22,7 @@ TOPO = os.path.join(HERE, "topology.json")
 GEN = os.path.join(HERE, "fba_docker_demo.py")
 MAX_NODES = 9
 JOB = {"busy": False, "msg": ""}
-
+MONITOR = {"mode": "continue", "halt": None}  # política ante un fork
 
 def load_topology():
     try:
@@ -57,7 +58,16 @@ def run(cmd, timeout=300):
         raise RuntimeError((r.stderr or r.stdout)[-300:])
 
 
+def halt_job():
+    try:
+        run(["docker", "compose", "stop", "-t", "1"], 120)
+    except Exception as e:
+        if MONITOR["halt"]:
+            MONITOR["halt"]["error"] = str(e)[:200]
+
+
 def apply_job():
+    MONITOR["halt"] = None
     JOB.update(busy=True, msg="Parando la red…")
     try:
         if not os.path.exists(GEN):
@@ -112,6 +122,9 @@ td,th{padding:4px 6px;text-align:left;border-bottom:1px solid var(--line)}
 ul{margin:6px 0 0;padding-left:18px;font-size:13px}
 pre{font-size:11px;max-height:220px;overflow:auto;background:var(--bg);padding:8px;border-radius:8px}
 .tag{font-size:12px;background:#3a2c0d;color:var(--warn);border-radius:6px;padding:1px 8px;margin-left:6px}
+
+.opt{display:block;width:100%;text-align:left;margin:6px 0;padding:9px 12px}.opt b{display:block}.opt span{font-size:13px;color:var(--mut)}
+.opt.on{border-color:var(--acc);background:#1d2447}.big{font-size:20px;font-weight:700;margin:4px 0}.big.bad{color:var(--bad);background:none;padding:0}
 </style></head><body><main>
 <h1>Red privada de stellar-core · SCP / FBA</h1>
 <div class="mut">Datos reales de los validadores, consultados cada segundo. Cada nodo decide en quién confía (sus quorum slices).</div>
@@ -120,6 +133,8 @@ pre{font-size:11px;max-height:220px;overflow:auto;background:var(--bg);padding:8
   <div class="card"><svg id="g" viewBox="0 0 400 300"><g id="edges"></g><g id="dots"></g><g id="nodes"></g></svg>
   <div class="mut">Pulsa un nodo para ver y editar su slice (flechas = en quién confía). Los puntos violeta se animan al cerrarse un ledger: ilustran una ronda de mensajes SCP.</div></div>
   <div class="card"><b>Control de nodos</b> <span class="mut">(simula fallos)</span><div id="ctl"></div></div>
+  <div class="card" id="pol"></div>
+  <div class="card" id="imp"></div>
   <div class="card"><b>Eventos</b><ul id="ev"></ul></div>
 </div><div>
   <div class="card"><div id="stat"></div><div id="tl"></div></div>
@@ -128,7 +143,7 @@ pre{font-size:11px;max-height:220px;overflow:auto;background:var(--bg);padding:8
   <div class="card"><details><summary>Datos crudos del primer nodo activo</summary><pre id="raw"></pre></details></div>
 </div></div></main>
 <script>
-let topo=null, draft=null, sel=null, job={}, prev={}, maxL=0, lastClose=Date.now(), blocks=[], events=[], busy={}, raw={}, last=null, hist={}, fork=null;
+let topo=null, draft=null, sel=null, job={}, prev={}, maxL=0, lastClose=Date.now(), blocks=[], events=[], busy={}, raw={}, last=null, hist={}, fork=null, mon={mode:"continue",halt:null}, haltSent=false;
 const $=s=>document.querySelector(s), clone=o=>JSON.parse(JSON.stringify(o));
 const setHTML=(el,h)=>{if(el.dataset.h!==h){el.dataset.h=h;el.innerHTML=h}};
 const ev=t=>{events.unshift(new Date().toLocaleTimeString()+"  "+t);events=events.slice(0,12)};
@@ -150,7 +165,7 @@ function analyze(T){
 const pos=(i,n)=>{const a=-Math.PI/2+2*Math.PI*i/n,R=n>6?115:105;return[200+R*Math.cos(a),150+R*Math.sin(a)]};
 async function poll(){
   try{last=await (await fetch("/api/status")).json()}catch(e){return}
-  topo=last.topology;job=last.job;
+  topo=last.topology;job=last.job;mon=last.monitor||mon;
   if(!draft||JSON.stringify(draft)===JSON.stringify(topoSnap)){draft=clone(topo)}
   topoSnap=clone(topo);
   if(!sel||!draft.nodes.includes(sel))sel=draft.nodes[0];
@@ -160,6 +175,9 @@ async function poll(){
     if(prev[k]&&prev[k].st!==st)ev(`${k}: ${prev[k].st} → ${st}`);prev[k]={st}});
   if(led<maxL){maxL=0;hist={};fork=null}
   detectFork();
+  if(!fork&&!mon.halt)haltSent=false;
+  if(fork&&mon.mode==="halt"&&!mon.halt&&!haltSent){haltSent=true;ev("Monitor de seguridad: fork detectado, deteniendo la red…");
+    fetch("/api/halt",{method:"POST",body:JSON.stringify({fork_at:fork.at,diverged:fork.latest-fork.at+1})})}
   if(led>maxL){if(maxL){blocks.push(led);blocks=blocks.slice(-24);ev(`Ledger ${led} cerrado`);wave()}lastClose=Date.now();maxL=led}
   render();
 }
@@ -172,7 +190,7 @@ function detectFork(){
   if(at===null)return;
   const groups={};Object.entries(hist[latest]).forEach(([n,h])=>(groups[h]=groups[h]||[]).push(n));
   if(!fork)ev(`¡FORK detectado en el ledger ${at}!`);
-  fork={at,latest,groups};
+  fork={at,latest,groups,t:fork?fork.t:Date.now()};
 }
 const hcol=h=>`hsl(${parseInt(h.slice(0,6),16)%360} 55% 45%)`;
 function wave(){
@@ -187,6 +205,7 @@ function render(){
   const upNames=last.nodes.filter(d=>d.up).map(d=>topo.nodes[d.n-1]),mq=maxQ(topo,upNames),ups=upNames.length;
   if(job.busy){b.className="warn";b.textContent=job.msg}
   else if(job.msg&&job.msg.startsWith("Error")){b.className="bad";b.textContent=job.msg+" (la topología nueva ya está guardada en topology.json; puedes volver a pulsar «Aplicar»)"}
+  else if(mon.halt){b.className="bad";b.textContent=`RED DETENIDA por el monitor de seguridad: fork detectado en el ledger ${mon.halt.fork_at}. Se cerraron como mucho ${mon.halt.diverged} ledger(es) divergentes antes de parar. Red parada desde hace ${fmt(Date.now()/1000-mon.halt.at)}.`}
   else if(fork){b.className="bad";b.textContent=`FORK en el ledger ${fork.at}: `+Object.entries(fork.groups).map(([h,ns])=>`{${ns.join(", ")}} cierran el hash ${h.slice(0,6)}`).join(" · ")+". Cada grupo cree tener la cadena válida: no hay intersección de quórums."}
   else if(!ups){b.className="bad";b.textContent=job.msg&&job.msg.startsWith("Error")?job.msg:"Ningún nodo responde. ¿Está la red levantada (docker compose up -d)?"}
   else if(!mq.size){b.className="bad";b.textContent=`Sin quórum: los nodos activos (${upNames.join(", ")}) no contienen ningún quórum según los slices configurados. La red no cierra ledgers (se pierde la liveness), pero no se corrompe: no hay fork.`}
@@ -216,8 +235,26 @@ function render(){
   setHTML($("#ev"),events.map(x=>`<li>${x}</li>`).join(""));
   setHTML($("#ctl"),last.nodes.map(d=>{const nm=topo.nodes[d.n-1];return `<button ${busy[d.n]||job.busy?"disabled":""} onclick="act(${d.n},'${d.up?"stop":"start"}')">${d.up?"⏹ Parar":"▶ Arrancar"} ${nm}</button>`}).join(""));
   const k=Object.keys(raw)[0];if(k)$("#raw").textContent=JSON.stringify(raw[k],null,1).slice(0,4000);
+  renderPolicy();
   renderEditor();
 }
+function fmt(s){s=Math.max(0,Math.round(s));return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")}
+function setMode(m){fetch("/api/mode",{method:"POST",body:JSON.stringify({mode:m})});mon={mode:m,halt:null};haltSent=false;render()}
+function renderPolicy(){
+  const o=(m,t,d)=>`<button class="opt ${mon.mode===m?"on":""}" onclick="setMode('${m}')"><b>${t}</b><span>${d}</span></button>`;
+  setHTML($("#pol"),`<b>Política ante un fork</b> <span class="mut">(qué pasa cuando los hashes divergen)</span>`
+    +o("continue","Dejar que siga · disponibilidad primero","Cada rama sigue cerrando ledgers por su cuenta, como el protocolo original de Stellar en el fork de 2014.")
+    +o("halt","Detener la red · seguridad primero","Un monitor para todos los nodos en cuanto ve hashes distintos en un mismo ledger. SCP prefiere parar antes que bifurcarse; en una red real lo haría un monitor o los operadores, no el protocolo.")
+    +`<details><summary class="mut">Contexto: el fork de Stellar de diciembre de 2014</summary><div class="mut" style="font-size:13px;margin-top:4px">Ocurrió con el protocolo original de Stellar, derivado de Ripple, no con SCP. Los nodos empezaron a discrepar y la red acabó cambiando de la cadena A a la B; según la propia SDF, ese consenso minimizaba la seguridad a favor de la actividad. SDF lo mitigó dejando un único validador hasta tener un consenso nuevo (SCP, 2015).</div></details>`);
+  setHTML($("#imp"),impactHTML());
+}
+function impactHTML(){
+  const h='<b>Impacto del fork</b>';
+  if(mon.halt){
+    return h+`<div class="big bad">Red detenida desde hace ${fmt(Date.now()/1000-mon.halt.at)}</div><table><tr><td>Ledger del fork</td><td>${mon.halt.fork_at}</td></tr><tr><td>Ledgers divergentes antes de parar</td><td>${mon.halt.diverged}</td></tr><tr><td>Máximo a revertir</td><td><b style="color:var(--ok)">${mon.halt.diverged} ledger(es)</b></td></tr></table><div class="mut" style="margin-top:6px">Coste: la red no procesa nada hasta que los operadores corrijan los slices y la reinicien («Aplicar y reiniciar red» con el escenario sano).${mon.halt.error?" Aviso: "+mon.halt.error:""}</div>`}
+  if(!fork)return h+'<div class="mut">Sin fork. Carga el escenario «Fork» en el editor y elige una política para ver su impacto.</div>';
+  const rows=Object.entries(fork.groups).map(([hh,ns],i)=>{const L=Math.max(0,...ns.map(n=>{const d=last.nodes[topo.nodes.indexOf(n)];return d&&d.up?(d.info?.ledger?.num??0):0}));return {hh,ns,c:Math.max(1,L-fork.at+1),l:"ABCDEF"[i]||"?"}});
+  return h+`<div class="big bad">Red dividida desde hace ${fmt((Date.now()-fork.t)/1000)}</div><table>`+rows.map(r=>`<tr><td><span style="color:${hcol(r.hh)}">●</span> Rama ${r.l}: ${r.ns.join(", ")}</td><td><b>${r.c}</b> ledgers desde el ledger ${fork.at}</td></tr>`).join("")+`</table><div class="mut" style="margin-top:6px">Si la red acaba adoptando una rama, se revierten los ledgers de la otra (${rows.map(r=>`rama ${r.l}: ${r.c}`).join(" · ")}) y con ellos sus transacciones. Cuanto más se tarda en parar, mayor es el daño.</div>`}
 function renderEditor(){
   const D=draft,dirty=JSON.stringify(D)!==JSON.stringify(topo),a=analyze(D),s=D.slices[sel];
   if(document.activeElement&&document.activeElement.closest("#ed")&&document.activeElement.type==="number")return;
@@ -244,7 +281,7 @@ function addNode(){const n=draft.nodes.length,name="node"+(n+1);draft.nodes.push
   draft.slices[name]={validators:[...draft.nodes],threshold:Math.floor(2*(n+1)/3)+1};norm(draft);sel=name;render()}
 function delNode(){const name=draft.nodes.pop();delete draft.slices[name];norm(draft);if(sel===name)sel=draft.nodes[0];render()}
 async function apply(){if(!confirm("Se reiniciará la red desde cero (el número de ledger vuelve a empezar). ¿Continuar?"))return;
-  ev("Aplicando nueva topología…");await fetch("/api/apply",{method:"POST",body:JSON.stringify(draft)});blocks=[];maxL=0;hist={};fork=null}
+  ev("Aplicando nueva topología…");await fetch("/api/apply",{method:"POST",body:JSON.stringify(draft)});blocks=[];maxL=0;hist={};fork=null;haltSent=false}
 async function act(n,a){busy[n]=true;ev(`${a==="stop"?"Parando":"Arrancando"} ${topo.nodes[n-1]}…`);
   try{await fetch(`/api/node/${n}/${a}`,{method:"POST"})}catch(e){}busy[n]=false}
 poll();setInterval(poll,1000);
@@ -270,11 +307,32 @@ class Handler(BaseHTTPRequestHandler):
             topo = load_topology()
             with ThreadPoolExecutor(len(topo["nodes"])) as ex:
                 nodes = list(ex.map(node_status, range(1, len(topo["nodes"]) + 1)))
-            self.send(200, json.dumps({"topology": topo, "nodes": nodes, "job": JOB}))
+            self.send(200, json.dumps({"topology": topo, "nodes": nodes, "job": JOB, "monitor": MONITOR}))
         else:
             self.send(404, "{}")
 
+    def body_json(self):
+        return json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+
     def do_POST(self):
+        if self.path == "/api/mode":
+            try:
+                mode = self.body_json()["mode"]
+                assert mode in ("continue", "halt")
+            except Exception:
+                return self.send(400, json.dumps({"ok": False}))
+            MONITOR.update(mode=mode, halt=None)
+            return self.send(200, json.dumps({"ok": True}))
+        if self.path == "/api/halt": 
+            if MONITOR["halt"] is None:
+                try:
+                    b = self.body_json()
+                    info = {"at": time.time(), "fork_at": int(b["fork_at"]), "diverged": int(b["diverged"])}
+                except Exception:
+                    return self.send(400, json.dumps({"ok": False}))
+                MONITOR["halt"] = info
+                threading.Thread(target=halt_job, daemon=True).start()
+            return self.send(200, json.dumps({"ok": True}))
         if self.path == "/api/apply":
             if JOB["busy"]:
                 return self.send(409, json.dumps({"ok": False, "out": "ya hay un reinicio en curso"}))
