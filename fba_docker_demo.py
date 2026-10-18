@@ -4,7 +4,7 @@ Cada nodo tiene sus propios quorum slices, definidos en `topology.json` (editabl
     "node1": {"validators": ["node1", "node2", "node3"], "threshold": 2}   # slice = 2 de esos 3
 
 Uso:
-  python fba_docker_demo.py                    # crea ./fba-demo con 4 nodos (slice = 3 de 4)
+  python fba_docker_demo.py                    # crea ./fba-demo con 6 nodos (slice = 5 de 6)
   python fba_docker_demo.py --nodes 6          # 6 nodos (reescribe la topología por defecto)
   python fba_docker_demo.py --out fba-demo     # tras editar topology.json: regenera las configuraciones
   python fba_docker_demo.py --dry-run          # claves falsas, solo para revisar los ficheros
@@ -250,7 +250,7 @@ def main():
 
     topo_path, keys_path = os.path.join(a.out, "topology.json"), os.path.join(a.out, "keys.json")
     if a.nodes is not None or not os.path.exists(topo_path):
-        topo = default_topology(a.nodes or 4)
+        topo = default_topology(a.nodes or 6)
         write(topo_path, json.dumps(topo, indent=2, ensure_ascii=False) + "\n")
     else:
         with open(topo_path, encoding="utf-8") as f:

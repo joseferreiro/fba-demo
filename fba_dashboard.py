@@ -33,8 +33,8 @@ def load_topology():
                   for x in nodes}
         return {"nodes": nodes, "slices": slices}
     except Exception:
-        nodes = [f"node{i}" for i in range(1, 5)]
-        return {"nodes": nodes, "slices": {x: {"validators": nodes, "threshold": 3} for x in nodes}}
+        nodes = [f"node{i}" for i in range(1, 7)]
+        return {"nodes": nodes, "slices": {x: {"validators": nodes, "threshold": 5} for x in nodes}}
 
 
 def fetch(n, path, timeout=1.5):
@@ -117,6 +117,7 @@ input[type=number]{width:60px;background:var(--bg);color:var(--fg);border:1px so
 label.chk{display:inline-block;margin:2px 10px 2px 0;font-size:13px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 td,th{padding:4px 6px;text-align:left;border-bottom:1px solid var(--line)}
+.quorum-cell{max-width:220px;overflow-wrap:anywhere}
 #tl{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
 .blk{background:#12301f;color:var(--ok);border-radius:6px;padding:2px 8px;font-size:12px}
 ul{margin:6px 0 0;padding-left:18px;font-size:13px}
@@ -139,7 +140,7 @@ pre{font-size:11px;max-height:220px;overflow:auto;background:var(--bg);padding:8
 </div><div>
   <div class="card"><div id="stat"></div><div id="tl"></div></div>
   <div class="card" id="ed"></div>
-  <div class="card"><table><thead><tr><th>Nodo</th><th>Estado</th><th>Ledger</th><th>Hash</th><th>Pares</th><th>Quórum (según el nodo)</th></tr></thead><tbody id="tb"></tbody></table></div>
+  <div class="card"><table><thead><tr><th>Nodo</th><th>Estado</th><th>Ledger</th><th>Hash</th><th>Pares</th><th>Quórum configurado</th></tr></thead><tbody id="tb"></tbody></table></div>
   <div class="card"><details><summary>Datos crudos del primer nodo activo</summary><pre id="raw"></pre></details></div>
 </div></div></main>
 <script>
@@ -228,10 +229,11 @@ function render(){
   const inter=last.nodes.find(d=>d.up&&d.quorum?.transitive)?.quorum.transitive.intersection;
   setHTML($("#stat"),`<b>Ledger ${maxL||"—"}</b> · último cierre hace ${since.toFixed(0)} s · intersección según stellar-core: ${inter===true?'<span style="color:var(--ok)">se cumple ✓</span>':inter===false?'<span style="color:var(--bad)">NO se cumple ✗</span>':"—"}`);
   setHTML($("#tl"),blocks.map(x=>`<span class="blk">${x}</span>`).join(""));
+  const quorumCell=name=>{const s=topo.slices[name],members=[...new Set([...s.validators,name])];
+    return `<td class="quorum-cell"><b>${s.threshold} de ${members.length}</b><br><span class="mut">${members.join(", ")}</span></td>`};
   setHTML($("#tb"),last.nodes.map(d=>{const nm=topo.nodes[d.n-1];
-    if(!d.up)return `<tr><td>${nm}</td><td style="color:var(--bad)">caído</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
-    const q=d.quorum?.qset||{},miss=Array.isArray(q.missing)?q.missing.length:q.missing;
-    return `<tr><td>${nm}</td><td>${d.info?.state??"?"}</td><td>${d.info?.ledger?.num??"—"}</td><td>${d.info?.ledger?.hash?`<span style="color:${hcol(d.info.ledger.hash)}">● ${d.info.ledger.hash.slice(0,6)}</span>`:"—"}</td><td>${d.info?.peers?.authenticated_count??"—"}</td><td>${q.agree!==undefined?`${q.agree} acuerdan · ${miss??0} faltan`:"—"}</td></tr>`}).join(""));
+    if(!d.up)return `<tr><td>${nm}</td><td style="color:var(--bad)">caído</td><td>—</td><td>—</td><td>—</td>${quorumCell(nm)}</tr>`;
+    return `<tr><td>${nm}</td><td>${d.info?.state??"?"}</td><td>${d.info?.ledger?.num??"—"}</td><td>${d.info?.ledger?.hash?`<span style="color:${hcol(d.info.ledger.hash)}">● ${d.info.ledger.hash.slice(0,6)}</span>`:"—"}</td><td>${d.info?.peers?.authenticated_count??"—"}</td>${quorumCell(nm)}</tr>`}).join(""));
   setHTML($("#ev"),events.map(x=>`<li>${x}</li>`).join(""));
   setHTML($("#ctl"),last.nodes.map(d=>{const nm=topo.nodes[d.n-1];return `<button ${busy[d.n]||job.busy?"disabled":""} onclick="act(${d.n},'${d.up?"stop":"start"}')">${d.up?"⏹ Parar":"▶ Arrancar"} ${nm}</button>`}).join(""));
   const k=Object.keys(raw)[0];if(k)$("#raw").textContent=JSON.stringify(raw[k],null,1).slice(0,4000);
@@ -262,7 +264,7 @@ function renderEditor(){
   let h=`<b>Quorum slice de ${sel}</b>${dirty?'<span class="tag">cambios sin aplicar</span>':""}<div class="mut">Basta con que <input type="number" min="1" max="${size}" value="${s.threshold}" onchange="setT(this.value)"> de estos ${size} nodos (él mismo cuenta) le convenzan:</div><div>`;
   h+=D.nodes.map(x=>`<label class="chk"><input type="checkbox" ${s.validators.includes(x)||x===sel?"checked":""} ${x===sel?"disabled":""} onchange="setM('${x}',this.checked)"> ${x}</label>`).join("")+"</div>";
   h+=`<div style="margin-top:8px"><button onclick="addNode()" ${D.nodes.length>=9?"disabled":""}>+ Añadir nodo</button><button onclick="delNode()" ${D.nodes.length<=1?"disabled":""}>− Quitar último</button><button onclick="draft=clone(topo);render()" ${dirty?"":"disabled"}>Descartar</button><button class="go" onclick="apply()" ${dirty&&!job.busy?"":"disabled"}>Aplicar y reiniciar red</button></div>`;
-  h+=`<div style="margin-top:6px"><span class="mut">Escenarios:</span> <button onclick="preset('sana')">Red sana (4 nodos, 3 de 4)</button><button onclick="preset('fork')">Fork: 2 grupos aislados (6 nodos)</button></div>`;
+  h+=`<div style="margin-top:6px"><span class="mut">Escenarios:</span> <button onclick="preset('sana')">Red sana (6 nodos, 5 de 6)</button><button onclick="preset('fork')">Fork: 2 grupos aislados (6 nodos)</button></div>`;
   h+=`<div style="margin-top:10px;font-size:13px"><b>Análisis de la configuración${dirty?" (borrador)":""}</b><br>`;
   if(!a)h+="Demasiados nodos para analizar.";
   else{h+=`Quórums mínimos (${a.mins.length}): ${a.mins.slice(0,6).map(q=>"{"+[...q].join(", ")+"}").join(" ")}${a.mins.length>6?" …":""}<br>`;
@@ -270,7 +272,7 @@ function renderEditor(){
   setHTML($("#ed"),h+"</div>");
 }
 function preset(k){let nodes,sl={};
-  if(k==="sana"){nodes=[1,2,3,4].map(i=>"node"+i);nodes.forEach(x=>sl[x]={validators:[...nodes],threshold:3})}
+  if(k==="sana"){nodes=[1,2,3,4,5,6].map(i=>"node"+i);nodes.forEach(x=>sl[x]={validators:[...nodes],threshold:5})}
   else{nodes=[1,2,3,4,5,6].map(i=>"node"+i);const A=nodes.slice(0,3),B=nodes.slice(3);
     A.forEach(x=>sl[x]={validators:[...A],threshold:2});B.forEach(x=>sl[x]={validators:[...B],threshold:2})}
   draft={nodes,slices:sl};sel=nodes[0];render()}
