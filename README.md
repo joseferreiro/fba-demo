@@ -1,4 +1,4 @@
-\# Demo de Federated Byzantine Agreement (FBA) con implementación de Stellar-core
+# Demo de Federated Byzantine Agreement (FBA) con implementación de Stellar-core
 
 
 
@@ -6,17 +6,17 @@ Red privada de validadores stellar-core en contenedores Docker, con un panel web
 
 
 
-\## Requisitos
+## Requisitos
 
 
 
-\- Docker
+- Docker
 
-\- Python 3
+- Python 3
 
 
 
-\## Crear el entorno desde cero
+## Crear el entorno desde cero
 
 
 <!-- cd fba-demo -->
@@ -43,29 +43,29 @@ python fba_dashboard.py
 
 
 
-\## Usar el panel
+## Usar el panel
 
 
 
-\- \*\*Pulsa un nodo\*\* para ver y editar su quorum slice.
+- **Pulsa un nodo** para ver y editar su quorum slice.
 
-\- \*\*Parar / Arrancar\*\* cada nodo simula caídas.
+- **Parar / Arrancar** cada nodo simula caídas.
 
-\- \*\*Aplicar y reiniciar red\*\* reinicia todo con la topología editada (el ledger vuelve a empezar).
+- **Aplicar y reiniciar red** reinicia todo con la topología editada (el ledger vuelve a empezar).
 
-\- Los \*\*escenarios\*\* del editor cargan una red sana o un fork de dos grupos aislados.
+- Los **escenarios** del editor cargan una red sana o un fork de dos grupos aislados.
 
-\- La columna \*\*Hash\*\* y el banner rojo muestran si hay un fork.
-
-
-
-\## Terminar
+- La columna **Hash** y el banner rojo muestran si hay un fork.
 
 
 
-1\. En la ventana del panel: `Ctrl + C`.
+## Terminar
 
-2\. En `fba-demo`:
+
+
+1. En la ventana del panel: `Ctrl + C`.
+
+2. En `fba-demo`:
 
 &#x20;  - `docker compose stop` para parar y conservar el estado
 
